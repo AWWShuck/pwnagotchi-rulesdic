@@ -1,12 +1,11 @@
 # pwnagotchi-rulesdic
-Plugins for pwnagotchi to run aircrack-ng on wordlist based on the ESSID. The main goal is to target weak wifi, like IoT or devices with default passwords.
+Plugins for pwnagotchi to run a wordlist based on the ESSID. The main goal is to target weak wifi, like IoT or devices with default passwords.
 For educational purpose only, run it on your OWN WIFI. 
 
 # Install
-Aircrack-ng needed, to install:
-- apt-get install aircrack-ng
+- apt-get install hashcrack hcx-tools
 - copy rulesdic.py into your custom plugin directory
-- Cracked handshakes stored in handshake folder as [essid].pcap.cracked
+- Cracked handshakes stored in handshake folder as [essid].22000.cracked
 
 Cracked password are also available by click on rulesdic, in the plugin page
 
@@ -20,6 +19,7 @@ main.plugins.rulesdic.exclude = [  #REGEXP to match the WIFI name
 	"^[Ii][Pp]hone"
 ]
 main.plugins.rulesdic.face = '(≡·≡)'
+main.plugins.rulesdic.handshakes_dir = '/home/pi/handshakes" #default
 ```
 Password wordlist generated:
 - Basic: Upper, lower, capitalized, reversed
@@ -27,8 +27,8 @@ Password wordlist generated:
 - Leet: some basic transformations to leet, is len(essid) <= max_essid_len
 
 # TODO
-- [ ] Try with hashcat as it seams more efficient, instead of aircrack-ng.
-- [ ] Limit aircrack-ng or hashcat duration as we don't want to make them run for hours but perhaps 5-10 min max.
+- [X] Try with hashcat as it seams more efficient, instead of aircrack-ng.
+- [ ] Limit hashcat duration as we don't want to make them run for hours but perhaps 5-10 min max.
 - [ ] Improve exclude and add include options to select which wifi to target, perhaps with vendors :-).
 - [ ] Add some cool messages and faces on display. It's a bit boring right now.
 - [ ] Hack the World!
