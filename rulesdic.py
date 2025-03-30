@@ -122,47 +122,62 @@ TEMPLATE = """
 {% endblock %}
 """
 
-
 class RulesDic(plugins.Plugin):
-    __author__ = 'fmatray'
-    __version__ = '1.0.1'
+    __author__ = 'fmatray, AWWShuck'
+    __version__ = '1.0.2'
     __license__ = 'GPL3'
-    __description__ = 'Tries to crack with aircrack-ng with a generated wordlist base on the wifi name'
+    __description__ = 'Tries to crack with hashcat with a generated wordlist base on the wifi name'
     __dependencies__ = {
-        'apt': ['aircrack-ng'],
+        'apt': ['hashcat','hcx-tools'],
     }
 
     def __init__(self):
-        try:
-            self.report = StatusFile('/root/handshakes/.rulesdic',
-                                     data_format='json')
-        except JSONDecodeError:
-            os.remove('/root/handshakes/.rulesdic')
-            self.report = StatusFile('/root/handshakes/.rulesdic',
-                                     data_format='json')
-
         self.options = dict()
+        self.options['handshake_dir'] = '/home/pi/handshakes'
         self.years = list(map(str, range(1900, datetime.now().year + 1)))
-        self.years.extend(map(str, range(00, 100)))
+        self.years.extend(map(str, range(0, 100)))
         self.running = False
         self.counter = 0
 
-    # called when the plugin is loaded
+        self.load_report()
+
+    def load_report(self):
+        try:
+            self.report = StatusFile(os.path.join(self.options['handshake_dir'], '.rulesdic'),
+                                     data_format='json')
+        except JSONDecodeError:
+            os.remove(os.path.join(self.options['handshake_dir'], '.rulesdic'))
+            self.report = StatusFile(os.path.join(self.options['handshake_dir'], '.rulesdic'),
+                                     data_format='json')
+        
+    # called when the plugin is loaded to check and install dependencies hcx-tools and hashcat if missing
     def on_loaded(self):
         logging.info('[RulesDic] plugin loaded')
+        self.check_and_install('hcx-tools')
+        self.check_and_install('hashcat')
 
-        check = subprocess.run((
-            '/usr/bin/dpkg -l aircrack-ng | grep aircrack-ng | awk \'{print $2, $3}\''),
-            shell=True, stdout=subprocess.PIPE)
+    def check_and_install(self, package_name):
+        check = subprocess.run([f"/usr/bin/dpkg -l {package_name} | grep {package_name} | awk '{{print $2, $3}}'"], shell=True, stdout=subprocess.PIPE)
         check = check.stdout.decode('utf-8').strip()
-        if check != "aircrack-ng <none>":
-            logging.info('[RulesDic] Found %s' % check)
+        if check != f"{package_name} <none>":
+            logging.info(f'[RulesDic] Found {check}')
             self.running = True
         else:
-            logging.warning('[RulesDic] aircrack-ng is not installed!')
-
+            logging.warning('[RulesDic] {package_name} is not installed. Attempting to install...')
+            install = subprocess.run(
+                [f'sudo apt update && sudo apt install -y {package_name}'], 
+                shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            if install.returncode == 0:
+                logging.info(f'[RulesDic] {package_name} installed successfully')
+                self.running = True
+            else:
+                logging.error(f'[RulesDic] Failed to install {package_name}')
+                self.running = False
+                
     def on_config_changed(self, config):
         self.options['handshakes'] = config['bettercap']['handshakes']
+        self.options['handshake_dir'] = config.get('handshake_dir', '/home/pi/handshakes')
         if 'exclude' not in self.options:
             self.options['exclude'] = []
         if 'tmp_folder' not in self.options:
@@ -171,6 +186,7 @@ class RulesDic(plugins.Plugin):
             self.options['max_essid_len'] = 12
         if 'face' not in self.options:
             self.options['face'] = '(≡·≡)'
+        self.load_report()
 
     def on_handshake(self, agent, filename, access_point, client_station):
         if not self.running:
@@ -225,20 +241,35 @@ class RulesDic(plugins.Plugin):
         self.report.update(data={'reported': reported, 'excluded': excluded})
 
     def check_handcheck(self, filename):
-        aircrack_execution = subprocess.run(
-            (f'nice /usr/bin/aircrack-ng {filename}'),
+        # Convert captured pcap to a hashcat compatible format 22000 (WPA-PBKDF2-PMKID+EAPOL) using hcxpcapngtool from hcx-tools
+        convert_command = f"hcxpcapngtool -o {filename}.22000 {filename}"
+        subprocess.run(convert_command, shell=True, check=True)
+        #show contents of file and store in memory (we are looking for the BSSID/ESSID)
+        hashcat_execution = subprocess.run(
+            (f'nice /usr/bin/hashcat --show -m 22000 {filename}'),
             shell=True, stdout=subprocess.PIPE)
-        result = aircrack_execution.stdout.decode('utf-8').strip()
+        result = hashcat_execution.stdout.decode('utf-8', errors='ignore').strip()
         return crackable_handshake_re.search(result)
 
     def try_to_crack(self, filename, essid, bssid):
         wordlist_filename = self._generate_dictionnary(filename, essid)
-        aircrack_execution = subprocess.run((
-            f'nice /usr/bin/aircrack-ng {filename} -w {wordlist_filename} -l {filename}.cracked -q -b {bssid} | grep KEY'),
-            shell=True, stdout=subprocess.PIPE)
-        result = aircrack_execution.stdout.decode("utf-8").strip()
-        if result != "KEY NOT FOUND":
-            return re.search(r'\[(.*)\]', result).group(1).strip()
+        hashcat_command = (
+            f'hashcat -m 22000 {filename} -a 0 {wordlist_filename} --quiet --show')
+        
+        hashcat_execution = subprocess.run(
+            hashcat_command, shell=True, stdout=subprocess.PIPE)
+
+        result = hashcat_execution.stdout.decode("utf-8").strip()
+
+        if result:
+            #Assuming the result format is hash:password
+            password = result.split(':')[-1].strip()
+
+            # Write the password to a .cracked file
+            with open(f"{filename}.cracked", "w") as f:
+                f.write(f"{filename} : {essid} : {password}")
+
+            return password
         return None
 
     def _generate_dictionnary(self, filename, essid):
@@ -335,8 +366,7 @@ class RulesDic(plugins.Plugin):
         if path == "/" or not path:
             try:
                 passwords = []
-                cracked_files = pathlib.Path('/home/pi/handshakes/').glob(
-                    '*.cracked')
+                cracked_files = pathlib.Path(self.options['handshake_dir']).glob('*.cracked')
                 for cracked_file in cracked_files:
                     ssid, bssid = re.findall("(.*)_([0-9a-f]{12})\.",
                                              cracked_file.name)[0]
