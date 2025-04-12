@@ -20,6 +20,7 @@ main.plugins.rulesdic.exclude = [  #REGEXP to match the WIFI name
 ]
 main.plugins.rulesdic.face = '(≡·≡)'
 main.plugins.rulesdic.handshakes_dir = '/home/pi/handshakes" #default
+main.plugins.rulesdic.max_crack_time = 5 # optional, defaults to 10 minutes if not set 
 ```
 Password wordlist generated:
 - Basic: Upper, lower, capitalized, reversed
@@ -28,7 +29,7 @@ Password wordlist generated:
 
 # TODO
 - [X] Try with hashcat as it seams more efficient, instead of aircrack-ng.
-- [ ] Limit hashcat duration as we don't want to make them run for hours but perhaps 5-10 min max.
+- [X] Limit hashcat duration as we don't want to make them run for hours but perhaps 5-10 min max.
 - [ ] Improve exclude and add include options to select which wifi to target, perhaps with vendors :-).
 - [ ] Add some cool messages and faces on display. It's a bit boring right now.
 - [ ] Hack the World!
