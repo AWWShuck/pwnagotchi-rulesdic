@@ -171,6 +171,7 @@ class RulesDic(plugins.Plugin):
         log_message('info', 'plugin loaded')
         self.check_and_install('hcxtools')
         self.check_and_install('hashcat')
+        self.running = True  # Set the plugin to running state
 
     def check_and_install(self, package_name):
         """Check if a package is installed, and install it if missing."""
@@ -364,27 +365,30 @@ class RulesDic(plugins.Plugin):
 
     def on_webhook(self, path, request):
         if not self.running:
-            return
+            return "Plugin is not running", 503  # Return a valid HTTP response
+
         if path == "/" or not path:
             try:
                 passwords = []
                 cracked_files = pathlib.Path(self.options['handshake_dir']).glob('*.cracked')
                 for cracked_file in cracked_files:
-                    match = re.findall("(.*)_([0-9a-f]{12})\.", cracked_file.name)
+                    match = re.findall(r"(.*)_([0-9a-f]{12})\.", cracked_file.name)
                     if match:
                         ssid, bssid = match[0]
                     else:
                         log_message('warning', f"Unexpected cracked file format: {cracked_file.name}")
                         continue
                     with open(cracked_file, 'r') as f:
-                        pwd = f.read()
+                        pwd = f.read().strip()
                     passwords.append({
                         "ssid": ssid,
                         "bssid": bssid,
-                        "password": pwd})
-                return render_template_string(TEMPLATE,
-                                              title="Passwords list",
-                                              passwords=passwords)
+                        "password": pwd
+                    })
+                return render_template_string(TEMPLATE, title="Passwords list", passwords=passwords)
             except Exception as e:
-                log_message('error', f"error while loading passwords: {e}")
+                log_message('error', f"Error while loading passwords: {e}")
                 logging.debug(e, exc_info=True)
+                return "Internal Server Error", 500  # Return a valid HTTP error response
+
+        return "Not Found", 404  # Return a valid HTTP response for unmatched paths
