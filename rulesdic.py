@@ -141,7 +141,7 @@ class RulesDic(plugins.Plugin):
     __license__ = 'GPL3'
     __description__ = 'Tries to crack with hashcat with a generated wordlist base on the wifi name'
     __dependencies__ = {
-        'apt': ['hashcat','hcx-tools'],
+        'apt': ['hashcat', 'hcxtools'],
     }
 
     def __init__(self):
@@ -169,7 +169,7 @@ class RulesDic(plugins.Plugin):
         
     def on_loaded(self):
         log_message('info', 'plugin loaded')
-        self.check_and_install('hcx-tools')
+        self.check_and_install('hcxtools')
         self.check_and_install('hashcat')
 
     def check_and_install(self, package_name):
