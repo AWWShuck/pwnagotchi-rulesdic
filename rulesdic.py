@@ -4,6 +4,7 @@ import re
 import subprocess
 import resource
 import pathlib
+import time  # Add this import for time tracking
 from itertools import product
 from datetime import datetime
 from string import punctuation
@@ -122,9 +123,21 @@ TEMPLATE = """
 {% endblock %}
 """
 
+def log_message(level, message):
+    """Helper function for logging."""
+    getattr(logging, level)(f"[RulesDic] {message}")
+
+def run_command(command, shell=True):
+    """Helper function to run shell commands."""
+    return subprocess.run(command, shell=shell, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+def generate_variations(base, transformations):
+    """Generate variations of a base string using transformations."""
+    return [''.join(p) for p in product(*[transformations.get(c, [c]) for c in base.lower()])]
+
 class RulesDic(plugins.Plugin):
     __author__ = 'fmatray, AWWShuck'
-    __version__ = '1.0.2'
+    __version__ = '1.0.3'
     __license__ = 'GPL3'
     __description__ = 'Tries to crack with hashcat with a generated wordlist base on the wifi name'
     __dependencies__ = {
@@ -134,6 +147,7 @@ class RulesDic(plugins.Plugin):
     def __init__(self):
         self.options = dict()
         self.options['handshake_dir'] = '/home/pi/handshakes'
+        self.options['max_crack_time'] = 10  # Default max crack time in minutes
         self.years = list(map(str, range(1900, datetime.now().year + 1)))
         self.years.extend(map(str, range(0, 100)))
         self.running = False
@@ -146,38 +160,35 @@ class RulesDic(plugins.Plugin):
             self.report = StatusFile(os.path.join(self.options['handshake_dir'], '.rulesdic'),
                                      data_format='json')
         except JSONDecodeError:
-            os.remove(os.path.join(self.options['handshake_dir'], '.rulesdic'))
+            try:
+                os.remove(os.path.join(self.options['handshake_dir'], '.rulesdic'))
+            except OSError as e:
+                log_message('error', f"Failed to remove corrupted .rulesdic file: {e}")
             self.report = StatusFile(os.path.join(self.options['handshake_dir'], '.rulesdic'),
                                      data_format='json')
         
-    # called when the plugin is loaded to check and install dependencies hcx-tools and hashcat if missing
     def on_loaded(self):
-        logging.info('[RulesDic] plugin loaded')
+        log_message('info', 'plugin loaded')
         self.check_and_install('hcx-tools')
         self.check_and_install('hashcat')
 
     def check_and_install(self, package_name):
-        check = subprocess.run([f"/usr/bin/dpkg -l {package_name} | grep {package_name} | awk '{{print $2, $3}}'"], shell=True, stdout=subprocess.PIPE)
-        check = check.stdout.decode('utf-8').strip()
-        if check != f"{package_name} <none>":
-            logging.info(f'[RulesDic] Found {check}')
-            self.running = True
+        """Check if a package is installed, and install it if missing."""
+        check = run_command(f"dpkg-query -W -f='${{Status}}' {package_name}")
+        if "install ok installed" in check.stdout.decode('utf-8'):
+            log_message('info', f"Found {package_name}")
         else:
-            logging.warning('[RulesDic] {package_name} is not installed. Attempting to install...')
-            install = subprocess.run(
-                [f'sudo apt update && sudo apt install -y {package_name}'], 
-                shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
+            log_message('warning', f"{package_name} not installed. Installing...")
+            install = run_command(f'sudo apt update && sudo apt install -y {package_name}')
             if install.returncode == 0:
-                logging.info(f'[RulesDic] {package_name} installed successfully')
-                self.running = True
+                log_message('info', f"{package_name} installed successfully")
             else:
-                logging.error(f'[RulesDic] Failed to install {package_name}')
-                self.running = False
-                
+                log_message('error', f"Failed to install {package_name}")
+
     def on_config_changed(self, config):
         self.options['handshakes'] = config['bettercap']['handshakes']
         self.options['handshake_dir'] = config.get('handshake_dir', '/home/pi/handshakes')
+        self.options['max_crack_time'] = config.get('max_crack_time', 10)  # Allow user to configure max time
         if 'exclude' not in self.options:
             self.options['exclude'] = []
         if 'tmp_folder' not in self.options:
@@ -196,76 +207,100 @@ class RulesDic(plugins.Plugin):
         excluded = self.report.data_field_or('excluded', default=[])
         essid = os.path.splitext(os.path.basename(filename))[0].split("_")[0]
         if filename in reported:
-            logging.info(f'[RulesDic] {filename} already processed')
+            log_message('info', f"{filename} already processed")
             return
         if self.options['exclude']:
             if filename in excluded:
-                logging.info(f'[RulesDic] {filename} already excluded')
+                log_message('info', f"{filename} already excluded")
                 return
             for pattern in self.options['exclude']:
                 if re.match(pattern, essid):
                     excluded.append(filename)
                     self.report.update(data={'reported': reported, 'excluded': excluded})
-                    logging.info(f'[RulesDic] {filename} excluded')
+                    log_message('info', f"{filename} excluded")
                     return
         display = agent.view()
         display.set('face', self.options['face'])
         display.set('status', 'Captured new handshake')
-        logging.info(
-            f'[RulesDic] New Handshake {filename}')
+        log_message('info', f"New Handshake {filename}")
         current_time = datetime.now()
 
-        result = self.check_handcheck(filename)
-        if not result:
-            logging.info('[RulesDic] No handshake')
-            display.set('face', self.options['face'])
-            display.set('status', 'No handshake found, next time perhaps...')
+        try:
+            result = self.check_handcheck(filename)
+            if not result:
+                log_message('info', 'No handshake')
+                return
+        except Exception as e:
+            log_message('error', f"Error checking handshake: {e}")
             return
+
         bssid = result.group('bssid')
         display.set('face', self.options['face'])
         display.set('status', 'Handshake found')
-        logging.info('[RulesDic] Handshake confirmed')
+        log_message('info', 'Handshake confirmed')
         pwd = self.try_to_crack(filename, essid, bssid)
         duration = (datetime.now() - current_time).total_seconds()
         if not pwd:
             display.set('face', self.options['face'])
             display.set('status', r'Password not found for {essid} :\'()')
-            logging.warning(
-                f'!!! [RulesDic] !!! Key not found for {essid} in {duration // 60:.0f}min and {duration % 60:.0f}s')
+            log_message('warning', f"Key not found for {essid} in {duration // 60:.0f}min and {duration % 60:.0f}s")
         else:
             display.set('face', self.options['face'])
             display.set('status', r'Password cracked for {essid} :\'()')
-            logging.warning(
-                f'!!! [RulesDic] !!! Cracked password for {essid}: {pwd}. Found in {duration // 60:.0f}min and {duration % 60:.0f}s')
+            log_message('warning', f"Cracked password for {essid}: {pwd}. Found in {duration // 60:.0f}min and {duration % 60:.0f}s")
         reported.append(filename)
         self.report.update(data={'reported': reported, 'excluded': excluded})
 
     def check_handcheck(self, filename):
-        # Convert captured pcap to a hashcat compatible format 22000 (WPA-PBKDF2-PMKID+EAPOL) using hcxpcapngtool from hcx-tools
-        convert_command = f"hcxpcapngtool -o {filename}.22000 {filename}"
-        subprocess.run(convert_command, shell=True, check=True)
-        #show contents of file and store in memory (we are looking for the BSSID/ESSID)
+        base_filename = os.path.splitext(filename)[0]
+        converted_filename = f"{base_filename}.22000"
+
+        convert_command = ["hcxpcapngtool", "-o", converted_filename, filename]
+        try:
+            subprocess.run(convert_command, check=True)
+        except subprocess.CalledProcessError as e:
+            log_message('error', f"Error converting pcap file: {e}")
+            return None
+
         hashcat_execution = subprocess.run(
-            (f'nice /usr/bin/hashcat --show -m 22000 {filename}'),
-            shell=True, stdout=subprocess.PIPE)
+            (f'nice /usr/bin/hashcat --show -m 22000 {converted_filename}'),
+            shell=True, stdout=subprocess.PIPE
+        )
         result = hashcat_execution.stdout.decode('utf-8', errors='ignore').strip()
         return crackable_handshake_re.search(result)
 
     def try_to_crack(self, filename, essid, bssid):
+        base_filename = os.path.splitext(filename)[0]
+        converted_filename = f"{base_filename}.22000"
+
         wordlist_filename = self._generate_dictionnary(filename, essid)
+
         hashcat_command = (
-            f'hashcat -m 22000 {filename} -a 0 {wordlist_filename} --quiet --show')
-        
-        hashcat_execution = subprocess.run(
-            hashcat_command, shell=True, stdout=subprocess.PIPE)
+            f'hashcat -m 22000 {converted_filename} -a 0 {wordlist_filename} --quiet --show'
+        )
 
-        result = hashcat_execution.stdout.decode("utf-8").strip()
+        start_time = time.time()
+        process = subprocess.Popen(
+            hashcat_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
 
-        if result:
-            #Assuming the result format is hash:password
+        while process.poll() is None:
+            elapsed_time = (time.time() - start_time) / 60  # Convert to minutes
+            if elapsed_time > self.options['max_crack_time']:
+                process.terminate()
+                log_message('warning', f"Cracking process terminated after {self.options['max_crack_time']} minutes")
+                return None
+            time.sleep(1)  # Check every second
+
+        result = process.stdout.read().decode("utf-8").strip()
+
+        if ":" in result:
             password = result.split(':')[-1].strip()
+        else:
+            log_message('warning', "Unexpected hashcat output format")
+            return None
 
-            # Write the password to a .cracked file
+        if password:
             with open(f"{filename}.cracked", "w") as f:
                 f.write(f"{filename} : {essid} : {password}")
 
@@ -273,23 +308,18 @@ class RulesDic(plugins.Plugin):
         return None
 
     def _generate_dictionnary(self, filename, essid):
-        wordlist_filename = os.path.splitext(os.path.basename(filename))
-        wordlist_filename = os.path.join(self.options['tmp_folder'],
-                                         wordlist_filename[0] + ".txt")
-        logging.info(f'[RulesDic] Generating {wordlist_filename}')
+        """Generate a wordlist based on ESSID."""
+        os.makedirs(self.options['tmp_folder'], exist_ok=True)
+        wordlist_filename = os.path.join(self.options['tmp_folder'], f"{os.path.splitext(filename)[0]}.txt")
+        log_message('info', f"Generating {wordlist_filename}")
+
         essid_bases = self._essid_base(essid)
-        wordlist = essid_bases.copy()
-        wordlist.extend(self._reverse_rule(essid_bases))
-        wordlist.extend(self._punctuation_rule(essid_bases))
-        wordlist.extend(self._years_rule(essid_bases))
-        if self.options['max_essid_len'] == -1 or len(essid) <= self.options[
-            'max_essid_len']:
-            logging.info(f'[RulesDic] Generating leet wordlist')
-            wordlist.extend(self._leet_rule(essid))
-        wordlist = list(dict.fromkeys(wordlist))
+        wordlist = set(essid_bases + self._reverse_rule(essid_bases) + self._punctuation_rule(essid_bases) +
+                       self._years_rule(essid_bases) + (self._leet_rule(essid) if len(essid) <= self.options['max_essid_len'] else []))
+
         with open(wordlist_filename, "w") as f:
             f.write('\n'.join(wordlist))
-        logging.info(f'[RulesDic] {len(wordlist)} password generated')
+        log_message('info', f"{len(wordlist)} passwords generated")
         return wordlist_filename
 
     def _essid_base(self, essid):
@@ -318,47 +348,19 @@ class RulesDic(plugins.Plugin):
         return wd
 
     def _leet_rule(self, essid):
-        # simple leet dictionnary with only simple caracters substitutions
+        """Generate leet variations of an ESSID."""
         leet_dict = {
-            'a': ['4', '@', 'a', 'A'],
-            'b': ['8', '6', 'b', 'B'],
-            'c': ['(', '<', '{', '[', 'c', 'C'],
-            'd': ['d', 'D'],
-            'e': ['3', 'e', 'E'],
-            'f': ['f', 'F'],
-            'g': ['6', '9', 'g', 'G'],
-            'h': ['#', 'h', 'H'],
-            'i': ['!', '|', '1', 'i', 'I'],
-            'j': ['j', 'J'],
-            'k': ['k', 'K'],
-            'l': ['1', 'l', 'L'],
-            'm': ['m', 'M'],
-            'n': ['n', 'N'],
-            'o': ['0', 'o', 'O'],
-            'p': ['p', 'P'],
-            'q': ['q', 'Q'],
-            'r': ['r', 'R'],
-            's': ['5', '$', 's', 'S'],
-            't': ['7', '+', 't', 'T'],
-            'u': ['u', 'U'],
-            'v': ['v', 'V'],
-            'w': ['w', 'W'],
-            'x': ['x', 'X'],
-            'y': ['y', 'Y'],
-            'z': ['2', 'z', 'Z'],
-            '0': ['o', 'O', '0'],
-            '1': ['i', 'I', '1'],
-            '2': ['r', 'R', '2'],
-            '3': ['e', 'E', '3'],
-            '4': ['a', 'A', '4'],
-            '5': ['s', 'S', '5'],
-            '6': ['b', 'B', '6'],
-            '7': ['y', 'Y', '7'],
-            '8': ['b', 'B', '8'],
-            '9': ['g', 'G', '9'],
+            'a': ['4', '@', 'a', 'A'], 'b': ['8', '6', 'b', 'B'], 'c': ['(', '<', '{', '[', 'c', 'C'],
+            'd': ['d', 'D'], 'e': ['3', 'e', 'E'], 'f': ['f', 'F'], 'g': ['6', '9', 'g', 'G'],
+            'h': ['#', 'h', 'H'], 'i': ['!', '|', '1', 'i', 'I'], 'j': ['j', 'J'], 'k': ['k', 'K'],
+            'l': ['1', 'l', 'L'], 'm': ['m', 'M'], 'n': ['n', 'N'], 'o': ['0', 'o', 'O'], 'p': ['p', 'P'],
+            'q': ['q', 'Q'], 'r': ['r', 'R'], 's': ['5', '$', 's', 'S'], 't': ['7', '+', 't', 'T'],
+            'u': ['u', 'U'], 'v': ['v', 'V'], 'w': ['w', 'W'], 'x': ['x', 'X'], 'y': ['y', 'Y'],
+            'z': ['2', 'z', 'Z'], '0': ['o', 'O', '0'], '1': ['i', 'I', '1'], '2': ['r', 'R', '2'],
+            '3': ['e', 'E', '3'], '4': ['a', 'A', '4'], '5': ['s', 'S', '5'], '6': ['b', 'B', '6'],
+            '7': ['y', 'Y', '7'], '8': ['b', 'B', '8'], '9': ['g', 'G', '9'],
         }
-        transformations = [leet_dict.get(c, c) for c in essid.lower()]
-        return [''.join(p) for p in product(*transformations)]
+        return generate_variations(essid, leet_dict)
 
     def on_webhook(self, path, request):
         if not self.running:
@@ -368,8 +370,12 @@ class RulesDic(plugins.Plugin):
                 passwords = []
                 cracked_files = pathlib.Path(self.options['handshake_dir']).glob('*.cracked')
                 for cracked_file in cracked_files:
-                    ssid, bssid = re.findall("(.*)_([0-9a-f]{12})\.",
-                                             cracked_file.name)[0]
+                    match = re.findall("(.*)_([0-9a-f]{12})\.", cracked_file.name)
+                    if match:
+                        ssid, bssid = match[0]
+                    else:
+                        log_message('warning', f"Unexpected cracked file format: {cracked_file.name}")
+                        continue
                     with open(cracked_file, 'r') as f:
                         pwd = f.read()
                     passwords.append({
@@ -380,5 +386,5 @@ class RulesDic(plugins.Plugin):
                                               title="Passwords list",
                                               passwords=passwords)
             except Exception as e:
-                logging.error(f"[RulesDic] error while loading passwords: {e}")
+                log_message('error', f"error while loading passwords: {e}")
                 logging.debug(e, exc_info=True)
