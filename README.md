@@ -3,7 +3,7 @@ Plugins for pwnagotchi to run a wordlist based on the ESSID. The main goal is to
 For educational purpose only, run it on your OWN WIFI. 
 
 # Install
-- apt-get install hashcrack hcx-tools
+- apt-get install hashcrack hcxtools
 - copy rulesdic.py into your custom plugin directory
 - Cracked handshakes stored in handshake folder as [essid].22000.cracked
 
