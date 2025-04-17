@@ -5,6 +5,7 @@ import subprocess
 import resource
 import pathlib
 import time  # Add this import for time tracking
+import random  # Add this import for random face selection
 from itertools import product
 from datetime import datetime
 from string import punctuation
@@ -123,6 +124,14 @@ TEMPLATE = """
 {% endblock %}
 """
 
+# Define a list of faces for different emotions
+faces = {
+    'neutral': ['(≡·≡)', '(•_•)', '(¬_¬)'],
+    'happy': ['(•‿•)', '(✧≖‿ゝ≖)', '(＾▽＾)'],
+    'sad': ['(╥﹏╥)', '(ಥ﹏ಥ)', '(T_T)'],
+    'angry': ['(╯°□°）╯︵ ┻━┻', '(ಠ_ಠ)', '(ノಠ益ಠ)ノ彡┻━┻']
+}
+
 def log_message(level, message):
     """Helper function for logging."""
     getattr(logging, level)(f"[RulesDic] {message}")
@@ -137,7 +146,7 @@ def generate_variations(base, transformations):
 
 class RulesDic(plugins.Plugin):
     __author__ = 'fmatray, AWWShuck'
-    __version__ = '1.0.4'
+    __version__ = '1.0.5'
     __license__ = 'GPL3'
     __description__ = 'Tries to crack with hashcat with a generated wordlist base on the wifi name'
     __dependencies__ = {
@@ -194,11 +203,9 @@ class RulesDic(plugins.Plugin):
         self.options['exclude'] = config.get('exclude', [])  # Exclude ESSID/BSSID patterns
         self.options['vendors'] = config.get('vendors', [])  # Vendor OUI regex patterns
         if 'tmp_folder' not in self.options:
-            self.options['tmp_folder'] = '/tmp'
+            self.options['tmp_folder'] = '/tmp' # Default temporary folder for wordlists
         if 'max_essid_len' not in self.options:
-            self.options['max_essid_len'] = 12
-        if 'face' not in self.options:
-            self.options['face'] = '(≡·≡)'
+            self.options['max_essid_len'] = 12  # Default max ESSID length for leet rule
         self.load_report()
 
     def on_handshake(self, agent, filename, access_point, client_station):
@@ -245,34 +252,40 @@ class RulesDic(plugins.Plugin):
 
         # Process the handshake
         display = agent.view()
-        display.set('face', self.options['face'])
-        display.set('status', 'Captured new handshake')
-        log_message('info', f"New Handshake {filename}")
+        display.set('face', random.choice(faces['neutral']))  # Neutral face for starting
+        display.set('status', 'Processing handshake...')
+        log_message('info', f"Processing handshake {filename}")
         current_time = datetime.now()
 
         try:
             result = self.check_handcheck(filename)
             if not result:
+                display.set('face', random.choice(faces['sad']))  # Sad face for no handshake
+                display.set('status', 'No valid handshake found')
                 log_message('info', 'No handshake')
                 return
         except Exception as e:
+            display.set('face', random.choice(faces['angry']))  # Angry face for errors
+            display.set('status', 'Error processing handshake')
             log_message('error', f"Error checking handshake: {e}")
             return
 
-        bssid = result.group('bssid')
-        display.set('face', self.options['face'])
-        display.set('status', 'Handshake found')
+        elapsed_time = (datetime.now() - current_time).total_seconds()
+        display.set('face', random.choice(faces['happy']))  # Happy face for handshake found
+        display.set('status', f'Handshake found! Time: {elapsed_time:.2f}s')
         log_message('info', 'Handshake confirmed')
-        pwd = self.try_to_crack(filename, essid, bssid)
+
+        pwd = self.try_to_crack(filename, essid, bssid, agent)
         duration = (datetime.now() - current_time).total_seconds()
         if not pwd:
-            display.set('face', self.options['face'])
-            display.set('status', r'Password not found for {essid} :\'()')
+            display.set('face', random.choice(faces['sad']))  # Sad face for failure
+            display.set('status', f'Password not found for {essid}')
             log_message('warning', f"Key not found for {essid} in {duration // 60:.0f}min and {duration % 60:.0f}s")
         else:
-            display.set('face', self.options['face'])
-            display.set('status', r'Password cracked for {essid} :\'()')
-            log_message('warning', f"Cracked password for {essid}: {pwd}. Found in {duration // 60:.0f}min and {duration % 60:.0f}s")
+            display.set('face', random.choice(faces['happy']))  # Cool face for success
+            display.set('status', f'Password cracked for {essid}')
+            log_message('info', f"Cracked password for {essid}: {pwd}. Found in {duration // 60:.0f}min and {duration % 60:.0f}s")
+
         reported.append(filename)
         self.report.update(data={'reported': reported, 'excluded': excluded})
 
@@ -294,7 +307,7 @@ class RulesDic(plugins.Plugin):
         result = hashcat_execution.stdout.decode('utf-8', errors='ignore').strip()
         return crackable_handshake_re.search(result)
 
-    def try_to_crack(self, filename, essid, bssid):
+    def try_to_crack(self, filename, essid, bssid, agent):
         base_filename = os.path.splitext(filename)[0]
         converted_filename = f"{base_filename}.22000"
 
@@ -309,28 +322,37 @@ class RulesDic(plugins.Plugin):
             hashcat_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
 
+        display = agent.view()
+        display.set('face', random.choice(faces['neutral']))  # Focused face for cracking
+        display.set('status', 'Cracking in progress...')
+        log_message('info', f"Started cracking for {essid}")
+
         while process.poll() is None:
             elapsed_time = (time.time() - start_time) / 60  # Convert to minutes
+            display.set('status', f'Cracking... Elapsed: {elapsed_time:.2f} min')
+            time.sleep(1)  # Update every second
+
             if elapsed_time > self.options['max_crack_time']:
                 process.terminate()
+                display.set('face', random.choice(faces['angry']))  # Disappointed face for timeout
+                display.set('status', f"Cracking timed out after {self.options['max_crack_time']} minutes")
                 log_message('warning', f"Cracking process terminated after {self.options['max_crack_time']} minutes")
                 return None
-            time.sleep(1)  # Check every second
 
         result = process.stdout.read().decode("utf-8").strip()
 
         if ":" in result:
             password = result.split(':')[-1].strip()
+            display.set('face', random.choice(faces['happy']))  # Cool face for success
+            display.set('status', f'Password cracked: {password}')
+            log_message('info', f"Password cracked for {essid}: {password}")
         else:
-            log_message('warning', "Unexpected hashcat output format")
+            display.set('face', random.choice(faces['sad']))  # Sad face for failure
+            display.set('status', 'Password not found')
+            log_message('warning', "Key not found")
             return None
 
-        if password:
-            with open(f"{filename}.cracked", "w") as f:
-                f.write(f"{filename} : {essid} : {password}")
-
-            return password
-        return None
+        return password
 
     def _generate_dictionnary(self, filename, essid):
         """Generate a wordlist based on ESSID."""
