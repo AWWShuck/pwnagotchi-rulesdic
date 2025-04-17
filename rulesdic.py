@@ -332,7 +332,8 @@ class RulesDic(plugins.Plugin):
             display.set('status', f'Cracking... Elapsed: {elapsed_time:.2f} min')
             time.sleep(1)  # Update every second
 
-            if elapsed_time > self.options['max_crack_time']:
+            # Check if max_crack_time is not -1 (infinite) and terminate if exceeded
+            if self.options['max_crack_time'] != -1 and elapsed_time > self.options['max_crack_time']:
                 process.terminate()
                 display.set('face', random.choice(faces['angry']))  # Disappointed face for timeout
                 display.set('status', f"Cracking timed out after {self.options['max_crack_time']} minutes")

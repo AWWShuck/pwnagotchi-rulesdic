@@ -9,7 +9,7 @@ For educational purposes only, run it on your OWN Wi-Fi.
   ```
 - Copy `rulesdic.py` into your custom plugin directory:
   ```bash
-  cp rulesdic.py /usr/local/lib/python3.7/dist-packages/pwnagotchi/plugins/default/
+  cp rulesdic.py /usr/local/share/pwnagotchi/custom-plugins/
   ```
 - Restart your Pwnagotchi:
   ```bash
@@ -38,7 +38,7 @@ main.plugins.rulesdic.vendors = [  # REGEXP to match vendor OUIs
     "^00:16:6F"   # Samsung Electronics
 ]
 main.plugins.rulesdic.handshakes_dir = '/home/pi/handshakes' # default
-main.plugins.rulesdic.max_crack_time = 10 # optional, defaults to 10 minutes if not set
+main.plugins.rulesdic.max_crack_time = 5  # defaults to 10 minutes if not defined, you can also use -1 for Infinite cracking time
 ```
 
 # Features
