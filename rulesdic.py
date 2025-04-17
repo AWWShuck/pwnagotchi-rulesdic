@@ -137,7 +137,7 @@ def generate_variations(base, transformations):
 
 class RulesDic(plugins.Plugin):
     __author__ = 'fmatray, AWWShuck'
-    __version__ = '1.0.3'
+    __version__ = '1.0.4'
     __license__ = 'GPL3'
     __description__ = 'Tries to crack with hashcat with a generated wordlist base on the wifi name'
     __dependencies__ = {
@@ -187,11 +187,12 @@ class RulesDic(plugins.Plugin):
                 log_message('error', f"Failed to install {package_name}")
 
     def on_config_changed(self, config):
-        self.options['handshakes'] = config['bettercap']['handshakes']
+        """Update plugin configuration."""
         self.options['handshake_dir'] = config.get('handshake_dir', '/home/pi/handshakes')
         self.options['max_crack_time'] = config.get('max_crack_time', 10)  # Allow user to configure max time
-        if 'exclude' not in self.options:
-            self.options['exclude'] = []
+        self.options['include'] = config.get('include', [])  # Include ESSID/BSSID patterns
+        self.options['exclude'] = config.get('exclude', [])  # Exclude ESSID/BSSID patterns
+        self.options['vendors'] = config.get('vendors', [])  # Vendor OUI regex patterns
         if 'tmp_folder' not in self.options:
             self.options['tmp_folder'] = '/tmp'
         if 'max_essid_len' not in self.options:
@@ -201,25 +202,48 @@ class RulesDic(plugins.Plugin):
         self.load_report()
 
     def on_handshake(self, agent, filename, access_point, client_station):
+        """Handle a captured handshake."""
         if not self.running:
             return
 
         reported = self.report.data_field_or('reported', default=[])
         excluded = self.report.data_field_or('excluded', default=[])
         essid = os.path.splitext(os.path.basename(filename))[0].split("_")[0]
+        bssid = access_point.get('mac', '')
+
+        # Check if the handshake has already been processed
         if filename in reported:
             log_message('info', f"{filename} already processed")
             return
+
+        # Vendor matching logic
+        if self.options['vendors']:
+            oui = ":".join(bssid.split(":")[:3])  # Extract OUI (first 3 octets)
+            vendor_matched = any(re.match(pattern, oui) for pattern in self.options['vendors'])
+            if not vendor_matched:
+                log_message('info', f"{filename} does not match vendor patterns")
+                return
+
+        # Include logic: Process only if ESSID or BSSID matches include patterns
+        if self.options['include']:
+            included = any(re.match(pattern, essid) or re.match(pattern, bssid) for pattern in self.options['include'])
+            if not included:
+                log_message('info', f"{filename} does not match include patterns")
+                return
+
+        # Exclude logic: Skip if ESSID or BSSID matches exclude patterns
         if self.options['exclude']:
             if filename in excluded:
                 log_message('info', f"{filename} already excluded")
                 return
             for pattern in self.options['exclude']:
-                if re.match(pattern, essid):
+                if re.match(pattern, essid) or re.match(pattern, bssid):
                     excluded.append(filename)
                     self.report.update(data={'reported': reported, 'excluded': excluded})
                     log_message('info', f"{filename} excluded")
                     return
+
+        # Process the handshake
         display = agent.view()
         display.set('face', self.options['face'])
         display.set('status', 'Captured new handshake')
