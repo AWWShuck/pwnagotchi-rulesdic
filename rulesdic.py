@@ -146,7 +146,7 @@ def generate_variations(base, transformations):
 
 class RulesDic(plugins.Plugin):
     __author__ = 'fmatray, AWWShuck'
-    __version__ = '1.0.5'
+    __version__ = '1.0.6'  # Updated version number
     __license__ = 'GPL3'
     __description__ = 'Tries to crack with hashcat with a generated wordlist base on the wifi name'
     __dependencies__ = {
@@ -161,6 +161,12 @@ class RulesDic(plugins.Plugin):
         self.years.extend(map(str, range(0, 100)))
         self.running = False
         self.counter = 0
+
+        # Ensure the pot file exists
+        pot_file = os.path.join(self.options['handshake_dir'], 'hashcat.potfile')
+        if not os.path.exists(pot_file):
+            log_message('info', "Pot file not found. Creating an empty pot file.")
+            open(pot_file, 'w').close()
 
         self.load_report()
 
@@ -310,11 +316,21 @@ class RulesDic(plugins.Plugin):
     def try_to_crack(self, filename, essid, bssid, agent):
         base_filename = os.path.splitext(filename)[0]
         converted_filename = f"{base_filename}.22000"
+        pot_file = os.path.join(self.options['handshake_dir'], 'hashcat.potfile')
+
+        # Check the pot file for an existing password
+        if os.path.exists(pot_file):
+            with open(pot_file, 'r') as f:
+                for line in f:
+                    if converted_filename in line:
+                        password = line.split(':')[-1].strip()
+                        log_message('info', f"Password found in pot file for {essid}: {password}")
+                        return password
 
         wordlist_filename = self._generate_dictionnary(filename, essid)
 
         hashcat_command = (
-            f'hashcat -m 22000 {converted_filename} -a 0 {wordlist_filename} --quiet --show'
+            f'hashcat -m 22000 {converted_filename} -a 0 {wordlist_filename} --quiet --show --potfile-path {pot_file}'
         )
 
         start_time = time.time()
@@ -347,13 +363,12 @@ class RulesDic(plugins.Plugin):
             display.set('face', random.choice(faces['happy']))  # Cool face for success
             display.set('status', f'Password cracked: {password}')
             log_message('info', f"Password cracked for {essid}: {password}")
+            return password
         else:
             display.set('face', random.choice(faces['sad']))  # Sad face for failure
             display.set('status', 'Password not found')
             log_message('warning', "Key not found")
             return None
-
-        return password
 
     def _generate_dictionnary(self, filename, essid):
         """Generate a wordlist based on ESSID."""
@@ -417,21 +432,28 @@ class RulesDic(plugins.Plugin):
         if path == "/" or not path:
             try:
                 passwords = []
-                cracked_files = pathlib.Path(self.options['handshake_dir']).glob('*.cracked')
-                for cracked_file in cracked_files:
-                    match = re.findall(r"(.*)_([0-9a-f]{12})\.", cracked_file.name)
-                    if match:
-                        ssid, bssid = match[0]
-                    else:
-                        log_message('warning', f"Unexpected cracked file format: {cracked_file.name}")
-                        continue
-                    with open(cracked_file, 'r') as f:
-                        pwd = f.read().strip()
-                    passwords.append({
-                        "ssid": ssid,
-                        "bssid": bssid,
-                        "password": pwd
-                    })
+                pot_file = os.path.join(self.options['handshake_dir'], 'hashcat.potfile')
+
+                # Check if the pot file exists
+                if not os.path.exists(pot_file):
+                    log_message('info', "No pot file found. Returning an empty password list.")
+                    return render_template_string(TEMPLATE, title="Passwords list", passwords=passwords)
+
+                # Read cracked passwords from the pot file
+                with open(pot_file, 'r') as f:
+                    for line in f:
+                        parts = line.strip().split(':')
+                        if len(parts) >= 3:
+                            hash_file = parts[0]
+                            password = parts[-1]
+                            ssid = os.path.basename(hash_file).split('_')[0]
+                            bssid = os.path.basename(hash_file).split('_')[1]
+                            passwords.append({
+                                "ssid": ssid,
+                                "bssid": bssid,
+                                "password": password
+                            })
+
                 return render_template_string(TEMPLATE, title="Passwords list", passwords=passwords)
             except Exception as e:
                 log_message('error', f"Error while loading passwords: {e}")

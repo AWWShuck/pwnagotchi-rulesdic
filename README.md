@@ -15,7 +15,7 @@ For educational purposes only, run it on your OWN Wi-Fi.
   ```bash
   sudo systemctl restart pwnagotchi
   ```
-- Cracked handshakes are stored in the handshake folder as `[essid].22000.cracked`.
+- Cracked passwords are stored in the `hashcat.potfile`.
 
 Cracked passwords are also available by clicking on `rulesdic` in the plugin page.
 
@@ -48,6 +48,7 @@ main.plugins.rulesdic.max_crack_time = 5  # defaults to 10 minutes if not define
 - **Vendor Filtering**: Allows filtering of handshakes based on vendor OUI patterns.
 - **Include/Exclude Filters**: Processes handshakes based on user-defined ESSID/BSSID patterns.
 - **Web Interface**: Displays a list of cracked passwords via a web interface.
+- **Pot File Storage**: Cracked passwords are stored in the `hashcat.potfile`.
 
 # Password Wordlist Generated
 - **Basic**: Upper, lower, capitalized, reversed.
@@ -88,3 +89,5 @@ The plugin uses dynamic faces to represent the current state:
 - wpa-sec-list (webhook)
 
 Have fun!
+
+Version: 1.0.6
