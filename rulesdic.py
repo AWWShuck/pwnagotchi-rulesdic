@@ -2,10 +2,8 @@ import logging
 import os
 import re
 import subprocess
-import resource
-import pathlib
-import time  # Add this import for time tracking
-import random  # Add this import for random face selection
+import time
+import random
 from itertools import product
 from datetime import datetime
 from string import punctuation
@@ -124,7 +122,6 @@ TEMPLATE = """
 {% endblock %}
 """
 
-# Define a list of faces for different emotions
 faces = {
     'neutral': ['(≡·≡)', '(•_•)', '(¬_¬)'],
     'happy': ['(•‿•)', '(✧≖‿ゝ≖)', '(＾▽＾)'],
@@ -133,20 +130,17 @@ faces = {
 }
 
 def log_message(level, message):
-    """Helper function for logging."""
     getattr(logging, level)(f"[RulesDic] {message}")
 
 def run_command(command, shell=True):
-    """Helper function to run shell commands."""
     return subprocess.run(command, shell=shell, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 def generate_variations(base, transformations):
-    """Generate variations of a base string using transformations."""
     return [''.join(p) for p in product(*[transformations.get(c, [c]) for c in base.lower()])]
 
 class RulesDic(plugins.Plugin):
     __author__ = 'fmatray, AWWShuck'
-    __version__ = '1.0.6'  # Updated version number
+    __version__ = '1.0.7'
     __license__ = 'GPL3'
     __description__ = 'Tries to crack with hashcat with a generated wordlist base on the wifi name'
     __dependencies__ = {
@@ -156,14 +150,13 @@ class RulesDic(plugins.Plugin):
     def __init__(self):
         self.options = dict()
         self.options['handshake_dir'] = '/home/pi/handshakes'
-        self.options['max_crack_time'] = 10  # Default max crack time in minutes
+        self.options['max_crack_time'] = 10
         self.years = list(map(str, range(1900, datetime.now().year + 1)))
         self.years.extend(map(str, range(0, 100)))
         self.running = False
         self.counter = 0
 
-        # Ensure the pot file exists
-        pot_file = os.path.join(self.options['handshake_dir'], 'hashcat.potfile')
+        pot_file = os.path.join(self.options['handshake_dir'], 'rulesdic.potfile')
         if not os.path.exists(pot_file):
             log_message('info', "Pot file not found. Creating an empty pot file.")
             open(pot_file, 'w').close()
@@ -186,10 +179,9 @@ class RulesDic(plugins.Plugin):
         log_message('info', 'plugin loaded')
         self.check_and_install('hcxtools')
         self.check_and_install('hashcat')
-        self.running = True  # Set the plugin to running state
+        self.running = True
 
     def check_and_install(self, package_name):
-        """Check if a package is installed, and install it if missing."""
         check = run_command(f"dpkg-query -W -f='${{Status}}' {package_name}")
         if "install ok installed" in check.stdout.decode('utf-8'):
             log_message('info', f"Found {package_name}")
@@ -202,20 +194,31 @@ class RulesDic(plugins.Plugin):
                 log_message('error', f"Failed to install {package_name}")
 
     def on_config_changed(self, config):
-        """Update plugin configuration."""
-        self.options['handshake_dir'] = config.get('handshake_dir', '/home/pi/handshakes')
-        self.options['max_crack_time'] = config.get('max_crack_time', 10)  # Allow user to configure max time
-        self.options['include'] = config.get('include', [])  # Include ESSID/BSSID patterns
-        self.options['exclude'] = config.get('exclude', [])  # Exclude ESSID/BSSID patterns
-        self.options['vendors'] = config.get('vendors', [])  # Vendor OUI regex patterns
-        if 'tmp_folder' not in self.options:
-            self.options['tmp_folder'] = '/tmp' # Default temporary folder for wordlists
-        if 'max_essid_len' not in self.options:
-            self.options['max_essid_len'] = 12  # Default max ESSID length for leet rule
+        """
+        Update plugin options from config.
+
+        Config options (standard pwnagotchi format):
+            main.plugins.rulesdic.enabled: = true
+            main.plugins.rulesdic.handshake_dir = "/home/pi/handshakes" (default: /home/pi/handshakes)
+        Optional:    
+            main.plugins.rulesdic.max_crack_time = 10 (Max time (in minutes) to run hashcat (default: 10))
+            main.plugins.rulesdic.include = [] List of regex patterns for ESSIDs/BSSIDs to include (default: [])
+            main.plugins.rulesdic.exclude = [] List of regex patterns for ESSIDs/BSSIDs to exclude (default: [])
+            main.plugins.rulesdic.vendors = [] List of regex patterns for vendor OUIs to include (default: [])
+            main.plugins.rulesdic.tmp_folder = "/tmp" Temporary folder for generated wordlists (default: /tmp)
+            main.plugins.rulesdic.max_essid_len = 12 Maximum ESSID length for leet rule (default: 12)
+        """
+        # Use standard pwnagotchi config keys
+        self.options['handshake_dir'] = config.get('main.plugins.rulesdic.handshake_dir', '/home/pi/handshakes')
+        self.options['max_crack_time'] = config.get('main.plugins.rulesdic.max_crack_time', 10)
+        self.options['include'] = config.get('main.plugins.rulesdic.include', [])
+        self.options['exclude'] = config.get('main.plugins.rulesdic.exclude', [])
+        self.options['vendors'] = config.get('main.plugins.rulesdic.vendors', [])
+        self.options['tmp_folder'] = config.get('main.plugins.rulesdic.tmp_folder', '/tmp')
+        self.options['max_essid_len'] = config.get('main.plugins.rulesdic.max_essid_len', 12)
         self.load_report()
 
     def on_handshake(self, agent, filename, access_point, client_station):
-        """Handle a captured handshake."""
         if not self.running:
             return
 
@@ -224,27 +227,23 @@ class RulesDic(plugins.Plugin):
         essid = os.path.splitext(os.path.basename(filename))[0].split("_")[0]
         bssid = access_point.get('mac', '')
 
-        # Check if the handshake has already been processed
         if filename in reported:
             log_message('info', f"{filename} already processed")
             return
 
-        # Vendor matching logic
         if self.options['vendors']:
-            oui = ":".join(bssid.split(":")[:3])  # Extract OUI (first 3 octets)
+            oui = ":".join(bssid.split(":")[:3])
             vendor_matched = any(re.match(pattern, oui) for pattern in self.options['vendors'])
             if not vendor_matched:
                 log_message('info', f"{filename} does not match vendor patterns")
                 return
 
-        # Include logic: Process only if ESSID or BSSID matches include patterns
         if self.options['include']:
             included = any(re.match(pattern, essid) or re.match(pattern, bssid) for pattern in self.options['include'])
             if not included:
                 log_message('info', f"{filename} does not match include patterns")
                 return
 
-        # Exclude logic: Skip if ESSID or BSSID matches exclude patterns
         if self.options['exclude']:
             if filename in excluded:
                 log_message('info', f"{filename} already excluded")
@@ -256,9 +255,8 @@ class RulesDic(plugins.Plugin):
                     log_message('info', f"{filename} excluded")
                     return
 
-        # Process the handshake
         display = agent.view()
-        display.set('face', random.choice(faces['neutral']))  # Neutral face for starting
+        display.set('face', random.choice(faces['neutral']))
         display.set('status', 'Processing handshake...')
         log_message('info', f"Processing handshake {filename}")
         current_time = datetime.now()
@@ -266,29 +264,29 @@ class RulesDic(plugins.Plugin):
         try:
             result = self.check_handcheck(filename)
             if not result:
-                display.set('face', random.choice(faces['sad']))  # Sad face for no handshake
+                display.set('face', random.choice(faces['sad']))
                 display.set('status', 'No valid handshake found')
                 log_message('info', 'No handshake')
                 return
         except Exception as e:
-            display.set('face', random.choice(faces['angry']))  # Angry face for errors
+            display.set('face', random.choice(faces['angry']))
             display.set('status', 'Error processing handshake')
             log_message('error', f"Error checking handshake: {e}")
             return
 
         elapsed_time = (datetime.now() - current_time).total_seconds()
-        display.set('face', random.choice(faces['happy']))  # Happy face for handshake found
+        display.set('face', random.choice(faces['happy']))
         display.set('status', f'Handshake found! Time: {elapsed_time:.2f}s')
         log_message('info', 'Handshake confirmed')
 
         pwd = self.try_to_crack(filename, essid, bssid, agent)
         duration = (datetime.now() - current_time).total_seconds()
         if not pwd:
-            display.set('face', random.choice(faces['sad']))  # Sad face for failure
+            display.set('face', random.choice(faces['sad']))
             display.set('status', f'Password not found for {essid}')
             log_message('warning', f"Key not found for {essid} in {duration // 60:.0f}min and {duration % 60:.0f}s")
         else:
-            display.set('face', random.choice(faces['happy']))  # Cool face for success
+            display.set('face', random.choice(faces['happy']))
             display.set('status', f'Password cracked for {essid}')
             log_message('info', f"Cracked password for {essid}: {pwd}. Found in {duration // 60:.0f}min and {duration % 60:.0f}s")
 
@@ -316,16 +314,17 @@ class RulesDic(plugins.Plugin):
     def try_to_crack(self, filename, essid, bssid, agent):
         base_filename = os.path.splitext(filename)[0]
         converted_filename = f"{base_filename}.22000"
-        pot_file = os.path.join(self.options['handshake_dir'], 'hashcat.potfile')
+        pot_file = os.path.join(self.options['handshake_dir'], 'rulesdic.potfile')
 
-        # Check the pot file for an existing password
         if os.path.exists(pot_file):
             with open(pot_file, 'r') as f:
                 for line in f:
-                    if converted_filename in line:
-                        password = line.split(':')[-1].strip()
-                        log_message('info', f"Password found in pot file for {essid}: {password}")
-                        return password
+                    parts = line.strip().split(':', 4)
+                    if len(parts) == 5:
+                        _, pot_bssid, _, pot_ssid, pot_password = parts
+                        if pot_bssid.lower() == bssid.lower() and pot_ssid == essid:
+                            log_message('info', f"Password found in pot file for {essid}: {pot_password}")
+                            return pot_password
 
         wordlist_filename = self._generate_dictionnary(filename, essid)
 
@@ -339,41 +338,61 @@ class RulesDic(plugins.Plugin):
         )
 
         display = agent.view()
-        display.set('face', random.choice(faces['neutral']))  # Focused face for cracking
+        display.set('face', random.choice(faces['neutral']))
         display.set('status', 'Cracking in progress...')
         log_message('info', f"Started cracking for {essid}")
 
         while process.poll() is None:
-            elapsed_time = (time.time() - start_time) / 60  # Convert to minutes
+            elapsed_time = (time.time() - start_time) / 60
             display.set('status', f'Cracking... Elapsed: {elapsed_time:.2f} min')
-            time.sleep(1)  # Update every second
-
-            # Check if max_crack_time is not -1 (infinite) and terminate if exceeded
+            time.sleep(1)
             if self.options['max_crack_time'] != -1 and elapsed_time > self.options['max_crack_time']:
                 process.terminate()
-                display.set('face', random.choice(faces['angry']))  # Disappointed face for timeout
+                display.set('face', random.choice(faces['angry']))
                 display.set('status', f"Cracking timed out after {self.options['max_crack_time']} minutes")
                 log_message('warning', f"Cracking process terminated after {self.options['max_crack_time']} minutes")
                 return None
 
         result = process.stdout.read().decode("utf-8").strip()
 
-        if ":" in result:
-            password = result.split(':')[-1].strip()
-            display.set('face', random.choice(faces['happy']))  # Cool face for success
-            display.set('status', f'Password cracked: {password}')
-            log_message('info', f"Password cracked for {essid}: {password}")
-            return password
-        else:
-            display.set('face', random.choice(faces['sad']))  # Sad face for failure
-            display.set('status', 'Password not found')
-            log_message('warning', "Key not found")
-            return None
+        for line in result.splitlines():
+            if ":" in line:
+                hash_part, password = line.rsplit(':', 1)
+                hash_fields = hash_part.split(':')
+                if len(hash_fields) >= 4:
+                    hash_value = hash_fields[0]
+                    cracked_bssid = hash_fields[1]
+                    client = hash_fields[2]
+                    ssid_hex = hash_fields[3]
+                    try:
+                        cracked_ssid = bytes.fromhex(ssid_hex).decode('utf-8', errors='ignore')
+                    except ValueError:
+                        cracked_ssid = ssid_hex
+                    pot_line = f"{hash_value}:{cracked_bssid}:{client}:{cracked_ssid}:{password}\n"
+                    already_in_pot = False
+                    if os.path.exists(pot_file):
+                        with open(pot_file, 'r') as pf:
+                            for potline in pf:
+                                if potline.strip() == pot_line.strip():
+                                    already_in_pot = True
+                                    break
+                    if not already_in_pot:
+                        with open(pot_file, "a") as pf:
+                            pf.write(pot_line)
+                    if cracked_bssid.lower() == bssid.lower() and cracked_ssid == essid:
+                        display.set('face', random.choice(faces['happy']))
+                        display.set('status', f'Password cracked: {password}')
+                        log_message('info', f"Password cracked for {essid}: {password}")
+                        return password
+
+        display.set('face', random.choice(faces['sad']))
+        display.set('status', 'Password not found')
+        log_message('warning', "Key not found")
+        return None
 
     def _generate_dictionnary(self, filename, essid):
-        """Generate a wordlist based on ESSID."""
         os.makedirs(self.options['tmp_folder'], exist_ok=True)
-        wordlist_filename = os.path.join(self.options['tmp_folder'], f"{os.path.splitext(filename)[0]}.txt")
+        wordlist_filename = os.path.join(self.options['tmp_folder'], f"{os.path.splitext(os.path.basename(filename))[0]}.txt")
         log_message('info', f"Generating {wordlist_filename}")
 
         essid_bases = self._essid_base(essid)
@@ -411,7 +430,6 @@ class RulesDic(plugins.Plugin):
         return wd
 
     def _leet_rule(self, essid):
-        """Generate leet variations of an ESSID."""
         leet_dict = {
             'a': ['4', '@', 'a', 'A'], 'b': ['8', '6', 'b', 'B'], 'c': ['(', '<', '{', '[', 'c', 'C'],
             'd': ['d', 'D'], 'e': ['3', 'e', 'E'], 'f': ['f', 'F'], 'g': ['6', '9', 'g', 'G'],
@@ -427,27 +445,22 @@ class RulesDic(plugins.Plugin):
 
     def on_webhook(self, path, request):
         if not self.running:
-            return "Plugin is not running", 503  # Return a valid HTTP response
+            return "Plugin is not running", 503
 
         if path == "/" or not path:
             try:
                 passwords = []
-                pot_file = os.path.join(self.options['handshake_dir'], 'hashcat.potfile')
+                pot_file = os.path.join(self.options['handshake_dir'], 'rulesdic.potfile')
 
-                # Check if the pot file exists
                 if not os.path.exists(pot_file):
                     log_message('info', "No pot file found. Returning an empty password list.")
                     return render_template_string(TEMPLATE, title="Passwords list", passwords=passwords)
 
-                # Read cracked passwords from the pot file
                 with open(pot_file, 'r') as f:
                     for line in f:
-                        parts = line.strip().split(':')
-                        if len(parts) >= 3:
-                            hash_file = parts[0]
-                            password = parts[-1]
-                            ssid = os.path.basename(hash_file).split('_')[0]
-                            bssid = os.path.basename(hash_file).split('_')[1]
+                        parts = line.strip().split(':', 4)
+                        if len(parts) == 5:
+                            hash_value, bssid, client, ssid, password = parts
                             passwords.append({
                                 "ssid": ssid,
                                 "bssid": bssid,
@@ -458,6 +471,6 @@ class RulesDic(plugins.Plugin):
             except Exception as e:
                 log_message('error', f"Error while loading passwords: {e}")
                 logging.debug(e, exc_info=True)
-                return "Internal Server Error", 500  # Return a valid HTTP error response
+                return "Internal Server Error", 500
 
-        return "Not Found", 404  # Return a valid HTTP response for unmatched paths
+        return "Not Found", 404

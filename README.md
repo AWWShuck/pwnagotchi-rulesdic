@@ -15,7 +15,7 @@ For educational purposes only, run it on your OWN Wi-Fi.
   ```bash
   sudo systemctl restart pwnagotchi
   ```
-- Cracked passwords are stored in the `hashcat.potfile`.
+- Cracked passwords are stored in the `rulesdic.potfile`.
 
 Cracked passwords are also available by clicking on `rulesdic` in the plugin page.
 
@@ -23,6 +23,9 @@ Cracked passwords are also available by clicking on `rulesdic` in the plugin pag
 ```toml
 main.plugins.rulesdic.enabled = true
 main.plugins.rulesdic.tmp_folder = '/my/tmp/folder' # optional, default: /tmp
+
+All others are optional:
+
 main.plugins.rulesdic.max_essid_len = 12 # optional, if set to -1 -> no limit, else does not generate leet rule if len(essid) > max_essid_len
 main.plugins.rulesdic.exclude = [  # REGEXP to match the Wi-Fi name
     "^Android",
@@ -37,7 +40,7 @@ main.plugins.rulesdic.vendors = [  # REGEXP to match vendor OUIs
     "^F4:5C:89",  # Apple, Inc.
     "^00:16:6F"   # Samsung Electronics
 ]
-main.plugins.rulesdic.handshakes_dir = '/home/pi/handshakes' # default
+main.plugins.rulesdic.handshake_dir = '/home/pi/handshakes' # default
 main.plugins.rulesdic.max_crack_time = 5  # defaults to 10 minutes if not defined, you can also use -1 for Infinite cracking time
 ```
 
@@ -48,7 +51,7 @@ main.plugins.rulesdic.max_crack_time = 5  # defaults to 10 minutes if not define
 - **Vendor Filtering**: Allows filtering of handshakes based on vendor OUI patterns.
 - **Include/Exclude Filters**: Processes handshakes based on user-defined ESSID/BSSID patterns.
 - **Web Interface**: Displays a list of cracked passwords via a web interface.
-- **Pot File Storage**: Cracked passwords are stored in the `hashcat.potfile`.
+- **Pot File Storage**: Cracked passwords are stored in the `rulesdic.potfile`.
 
 # Password Wordlist Generated
 - **Basic**: Upper, lower, capitalized, reversed.
@@ -76,6 +79,16 @@ The plugin uses dynamic faces to represent the current state:
 - **Password Cracked**: `(✧≖‿ゝ≖) Password cracked: mypassword123`
 - **Failure**: `(ಥ﹏ಥ) Password not found`
 
+# Changelog
+
+## 1.0.7 (2024-05-03)
+- Updated config parsing to use standard pwnagotchi format (`main.plugins.rulesdic.*`)
+- Improved potfile handling and parsing
+- Added/clarified configuration comments
+- Cleaned up code and removed unnecessary comments
+- Ensured SSID hex decoding and robust potfile field extraction
+- Improved wordlist filename generation
+
 # TODO
 - [X] Try with hashcat as it seems more efficient, instead of aircrack-ng.
 - [X] Limit hashcat duration as we don't want to make them run for hours but perhaps 5-10 min max.
@@ -90,4 +103,8 @@ The plugin uses dynamic faces to represent the current state:
 
 Have fun!
 
-Version: 1.0.6
+Version: 1.0.7
+
+# Authors
+- fmatray
+- AWWShuck
